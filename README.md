@@ -17,11 +17,14 @@ Use `npm test` for the core test suite and `npm run build` to create the product
 
 ## Implemented workflow
 
-The maintainable editor currently supports:
+TinyCue currently supports:
 
 - Local video and audio playback without uploading media
-- SRT and WebVTT import, validation, serialization, and download
+- SRT, WebVTT, and plain-text import, validation, serialization, and download
+- Export controls for selected cues, line endings, SRT numbering, and clipboard copy
+- Validated TinyCue project archive import and export
 - Cue creation, selection, text editing, exact timing, split, merge, and delete
+- Undoable all-cue or selected-cue delay and rational frame-rate conversion
 - Canvas timeline with zoom, scrolling, playhead, waveform, snapping, drag, and resize
 - Frame-sized stepping, playback speed, cue looping, and follow-playback scrolling
 - Undo and redo through the editor command engine

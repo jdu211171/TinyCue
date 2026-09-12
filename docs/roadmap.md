@@ -3,7 +3,7 @@
 Status: execution plan  
 Release definition: [product requirements](requirements.md)
 
-Implementation status (2026-09-11): Stage 0 is complete. Stage 1 has a tested vertical workflow and remains in progress; Stage 2 timeline features are partially implemented ahead of the Stage 1 exit gate.
+Implementation status (2026-09-12): Stage 0 is complete. Stage 1 remains in progress with verified project archives, plain-text import/export, configurable SRT export, batch subtitle delay, and rational frame-rate conversion. Stage 2 timeline features are partially implemented ahead of the Stage 1 exit gate.
 
 ## Delivery rules
 

@@ -62,7 +62,7 @@ src/
 └── workers/             parsing, analysis, rendering worker entrypoints
 ```
 
-The captured Angular files remain under the legacy route until parity is signed off. They are test references and are not imported by the new source.
+Historical parity notes inform acceptance tests, but TinyCue does not ship or import the prototype application's source or assets.
 
 ## Core data model
 

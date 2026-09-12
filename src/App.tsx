@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Download, FilePlus2, FolderOpen, Keyboard, Magnet, Pause, Play, Plus, Redo2, Scissors, SkipBack, SkipForward, Trash2, Undo2, Video, Waves, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock3, Download, FilePlus2, FolderOpen, Keyboard, Magnet, Pause, Play, Plus, Redo2, Scissors, SkipBack, SkipForward, Trash2, Undo2, Video, Waves, X } from "lucide-react";
 import { EditorEngine } from "./editor-core/engine";
+import { FRAME_RATES, frameRateScale, type FrameRateId } from "./editor-core/frameRates";
 import { createCue, createProject, newId, type SubtitleCue } from "./editor-core/types";
 import { formatClock, parseClock, secondsToUs, usToSeconds } from "./editor-core/time";
 import { parseSubtitles, serializeSubtitles, type SubtitleFormat } from "./formats";
 import { latestProject, saveProject } from "./persistence/database";
+import { parseProjectArchive, projectArchiveFileName, serializeProjectArchive } from "./persistence/projectArchive";
 import { cueCps, validateProject } from "./quality/checks";
 import { Timeline } from "./timeline/Timeline";
 import { createWaveform } from "./media/waveform";
@@ -69,11 +71,15 @@ function Inspector({ cue }: { cue?: SubtitleCue }) {
 export default function App() {
   const snapshot = useSyncExternalStore(engine.subscribe, engine.getSnapshot); const cues = snapshot.project.tracks[0].cues;
   const activeCue = cues.find(cue => cue.id === snapshot.activeCueId); const issues = useMemo(() => validateProject(snapshot.project), [snapshot.project]);
-  const videoRef = useRef<HTMLVideoElement>(null); const subtitlePicker = useRef<HTMLInputElement>(null); const videoPicker = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null); const documentPicker = useRef<HTMLInputElement>(null); const videoPicker = useRef<HTMLInputElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null); const [durationUs, setDurationUs] = useState(60_000_000); const [currentTimeUs, setCurrentTimeUs] = useState(0);
   const [playing, setPlaying] = useState(false); const [follow, setFollow] = useState(true); const [snap, setSnap] = useState(true); const [loop, setLoop] = useState(false);
   const [peaks, setPeaks] = useState<number[]>([]); const [notice, setNotice] = useState("Ready"); const [showIssues, setShowIssues] = useState(() => innerWidth > 700);
   const [exportFormat, setExportFormat] = useState<SubtitleFormat>("srt");
+  const [exportOpen, setExportOpen] = useState(false); const [exportScope, setExportScope] = useState<"all" | "selected">("all");
+  const [exportLineEnding, setExportLineEnding] = useState<"lf" | "crlf">("lf"); const [exportStartNumber, setExportStartNumber] = useState(1);
+  const [timingOpen, setTimingOpen] = useState(false); const [timingScope, setTimingScope] = useState<"all" | "selected">("all"); const [delayMs, setDelayMs] = useState(0);
+  const [sourceFrameRate, setSourceFrameRate] = useState<FrameRateId>("25/1"); const [targetFrameRate, setTargetFrameRate] = useState<FrameRateId>("24000/1001");
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [shortcuts, setShortcuts] = useState<Record<ShortcutAction, string>>(() => {
     try { return { ...defaultShortcuts, ...JSON.parse(localStorage.getItem("tinycue-shortcuts") ?? "{}") }; } catch { return defaultShortcuts; }
@@ -86,9 +92,19 @@ export default function App() {
 
   const seek = useCallback((timeUs: number) => { const safe = Math.max(0, Math.min(durationUs, timeUs)); setCurrentTimeUs(safe); if (videoRef.current) videoRef.current.currentTime = usToSeconds(safe); }, [durationUs]);
   const togglePlay = () => { const video = videoRef.current; if (!video) return; if (video.paused) video.play().catch(() => setNotice("The browser could not play this media")); else video.pause(); };
-  const openSubtitle = async (file: File) => {
-    const result = parseSubtitles(await file.text(), file.name); engine.dispatch({ type: "replace-project", project: result.project });
-    setExportFormat(result.project.sourceFormat ?? "srt"); setDurationUs(Math.max(60_000_000, result.project.tracks[0].cues.at(-1)?.endUs ?? 0)); setNotice(result.warnings.length ? `Opened with ${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}` : `Opened ${file.name}`);
+  const openDocument = async (file: File) => {
+    try {
+      const input = await file.text();
+      if (/\.tinycue$/i.test(file.name)) {
+        const project = parseProjectArchive(input); engine.dispatch({ type: "replace-project", project }); engine.markSaved();
+        setExportFormat(project.sourceFormat ?? "srt"); setDurationUs(Math.max(60_000_000, project.tracks[0].cues.at(-1)?.endUs ?? 0)); setNotice(`Opened ${file.name}`);
+        return;
+      }
+      const result = parseSubtitles(input, file.name); engine.dispatch({ type: "replace-project", project: result.project });
+      setExportFormat(result.project.sourceFormat ?? "srt"); setDurationUs(Math.max(60_000_000, result.project.tracks[0].cues.at(-1)?.endUs ?? 0)); setNotice(result.warnings.length ? `Opened with ${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}` : `Opened ${file.name}`);
+    } catch (error) {
+      setNotice(`Could not open ${file.name}: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
   };
   const openVideo = async (file: File) => {
     if (videoUrl) URL.revokeObjectURL(videoUrl); const url = URL.createObjectURL(file); setVideoUrl(url); setPeaks([]); setNotice(`Opened ${file.name} · building waveform…`);
@@ -96,10 +112,30 @@ export default function App() {
     if (file.size > 150 * 1024 * 1024) setNotice("Video ready · waveform deferred for this large file");
     else createWaveform(file).then(value => { setPeaks(value); setNotice("Waveform ready"); }).catch(() => setNotice("Video ready · waveform unavailable for this codec"));
   };
+  const serializeExport = (format: SubtitleFormat) => serializeSubtitles(snapshot.project, format, { selectedIds: exportScope === "selected" ? new Set(snapshot.selectedIds) : undefined, lineEnding: exportLineEnding, startNumber: exportStartNumber });
+  const exportCueCount = exportScope === "selected" ? snapshot.selectedIds.length : cues.length;
   const download = (format: SubtitleFormat) => {
-    const text = serializeSubtitles(snapshot.project, format); const blob = new Blob([text], { type: format === "vtt" ? "text/vtt;charset=utf-8" : "application/x-subrip;charset=utf-8" });
+    const text = serializeExport(format);
+    const mimeType = format === "vtt" ? "text/vtt;charset=utf-8" : format === "txt" ? "text/plain;charset=utf-8" : "application/x-subrip;charset=utf-8";
+    const blob = new Blob([text], { type: mimeType });
     const url = URL.createObjectURL(blob), anchor = document.createElement("a"); const base = (snapshot.project.sourceFileName ?? snapshot.project.title).replace(/\.[^.]+$/, "");
-    anchor.href = url; anchor.download = `${base}.${format}`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); engine.markSaved(); setNotice(`Downloaded ${anchor.download}`);
+    anchor.href = url; anchor.download = `${base}.${format}`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); engine.markSaved(); setExportOpen(false); setNotice(`Downloaded ${anchor.download}`);
+  };
+  const copyExport = async () => {
+    try {
+      await navigator.clipboard.writeText(serializeExport(exportFormat)); setExportOpen(false); setNotice(`Copied ${exportCueCount} cue${exportCueCount === 1 ? "" : "s"}`);
+    } catch {
+      setNotice("Clipboard access was unavailable");
+    }
+  };
+  const downloadProject = () => {
+    try {
+      const blob = new Blob([serializeProjectArchive(snapshot.project)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob), anchor = document.createElement("a");
+      anchor.href = url; anchor.download = projectArchiveFileName(snapshot.project.title); anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); engine.markSaved(); setNotice(`Saved ${anchor.download}`);
+    } catch (error) {
+      setNotice(`Could not save project: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
   };
   const createAtCaret = () => engine.createAt(currentTimeUs);
   const split = () => { if (activeCue) engine.dispatch({ type: "split-cue", id: activeCue.id, atUs: currentTimeUs }); };
@@ -113,6 +149,27 @@ export default function App() {
   };
   const duplicate = () => { if (!activeCue) return; const offset = 80_000; engine.dispatch({ type: "add-cue", cue: { ...activeCue, id: newId(), startUs: activeCue.endUs + offset, endUs: activeCue.endUs + offset + (activeCue.endUs - activeCue.startUs), locked: false } }); };
   const setShortcut = (action: ShortcutAction, value: string) => { const next = { ...shortcuts, [action]: value }; setShortcuts(next); localStorage.setItem("tinycue-shortcuts", JSON.stringify(next)); };
+  const openExport = () => { if (!snapshot.selectedIds.length) setExportScope("all"); setExportOpen(true); };
+  const timingTargets = () => {
+    const selectedIds = new Set(snapshot.selectedIds);
+    return cues.filter(cue => !cue.locked && (timingScope === "all" || selectedIds.has(cue.id)));
+  };
+  const applyDelay = () => {
+    const targets = timingTargets(), requestedDeltaUs = Math.round(delayMs * 1_000);
+    if (!targets.length) { setNotice("No unlocked cues are available for this timing change"); return; }
+    if (!requestedDeltaUs) { setNotice("Enter a non-zero subtitle delay"); return; }
+    const appliedDeltaUs = Math.max(requestedDeltaUs, -Math.min(...targets.map(cue => cue.startUs)));
+    const ids = targets.map(cue => cue.id);
+    engine.dispatch(timingScope === "all" ? { type: "shift-all", deltaUs: requestedDeltaUs } : { type: "move-cues", ids, deltaUs: requestedDeltaUs });
+    setTimingOpen(false); setNotice(`Shifted ${ids.length} cue${ids.length === 1 ? "" : "s"} by ${appliedDeltaUs / 1_000} ms`);
+  };
+  const convertFrameRate = () => {
+    const ids = timingTargets().map(cue => cue.id);
+    if (!ids.length) { setNotice("No unlocked cues are available for this timing change"); return; }
+    if (sourceFrameRate === targetFrameRate) { setNotice("Choose two different frame rates"); return; }
+    engine.dispatch({ type: "scale-cues", ids, ...frameRateScale(sourceFrameRate, targetFrameRate) });
+    setTimingOpen(false); setNotice(`Converted ${ids.length} cue${ids.length === 1 ? "" : "s"} from ${FRAME_RATES.find(rate => rate.id === sourceFrameRate)?.label} to ${FRAME_RATES.find(rate => rate.id === targetFrameRate)?.label} fps`);
+  };
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -140,20 +197,22 @@ export default function App() {
     addEventListener("keydown", handler); return () => removeEventListener("keydown", handler);
   });
 
-  return <main className="app" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (!file) return; if (/\.(srt|vtt)$/i.test(file.name)) openSubtitle(file); else openVideo(file); }}>
+  return <main className="app" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (!file) return; if (/\.(srt|vtt|txt|tinycue)$/i.test(file.name)) openDocument(file); else openVideo(file); }}>
     <header className="topbar">
       <div className="brand"><div className="brand-mark">TC</div><div><strong>TinyCue</strong><span>Local workspace</span></div></div>
       <nav className="top-actions">
         <button onClick={() => { engine.dispatch({ type: "replace-project", project: createProject() }); setNotice("New project"); }}><FilePlus2 />New</button>
-        <button onClick={() => subtitlePicker.current?.click()}><FolderOpen />Open subtitles</button>
+        <button onClick={() => documentPicker.current?.click()}><FolderOpen />Open</button>
+        <button onClick={downloadProject}><Download />Save project</button>
         <button onClick={() => videoPicker.current?.click()}><Video />Open video</button>
         <span className="divider" />
         <IconButton label="Undo" disabled={!snapshot.undoDepth} onClick={() => engine.undo()}><Undo2 /></IconButton>
         <IconButton label="Redo" disabled={!snapshot.redoDepth} onClick={() => engine.redo()}><Redo2 /></IconButton>
         <IconButton label="Keyboard shortcuts" onClick={() => setShortcutOpen(true)}><Keyboard /></IconButton>
+        <button className="mobile-export" onClick={openExport}><Download />Export</button>
       </nav>
-      <div className="save-state"><span className={snapshot.dirty ? "dirty-dot" : "saved-dot"} />{snapshot.dirty ? "Unsaved changes" : notice}<select aria-label="Download format" value={exportFormat} onChange={event => setExportFormat(event.target.value as SubtitleFormat)}><option value="srt">SRT</option><option value="vtt">WebVTT</option></select><button className="download-button" onClick={() => download(exportFormat)}><Download />Download</button></div>
-      <input ref={subtitlePicker} hidden type="file" accept=".srt,.vtt,text/vtt" onChange={event => { const file = event.target.files?.[0]; if (file) openSubtitle(file); event.currentTarget.value = ""; }} />
+      <div className="save-state"><span className={snapshot.dirty ? "dirty-dot" : "saved-dot"} />{snapshot.dirty ? "Unsaved changes" : notice}<select aria-label="Export format" value={exportFormat} onChange={event => setExportFormat(event.target.value as SubtitleFormat)}><option value="srt">SRT</option><option value="vtt">WebVTT</option><option value="txt">Plain text</option></select><button className="download-button" onClick={openExport}><Download />Export</button></div>
+      <input ref={documentPicker} hidden type="file" accept=".tinycue,.srt,.vtt,.txt,text/plain,text/vtt" onChange={event => { const file = event.target.files?.[0]; if (file) openDocument(file); event.currentTarget.value = ""; }} />
       <input ref={videoPicker} hidden type="file" accept="video/*,audio/*" onChange={event => { const file = event.target.files?.[0]; if (file) openVideo(file); event.currentTarget.value = ""; }} />
     </header>
 
@@ -170,12 +229,14 @@ export default function App() {
     </section>
 
     <section className="timeline-panel panel">
-      <div className="timeline-toolbar"><div><IconButton label="Create cue at playhead" onClick={createAtCaret}><Plus /></IconButton><button disabled={!activeCue} onClick={() => insertRelative("before")}>Insert before</button><button disabled={!activeCue} onClick={() => insertRelative("after")}>Insert after</button><IconButton label="Split at playhead" disabled={!activeCue} onClick={split}><Scissors /></IconButton><IconButton label="Delete selected" disabled={!snapshot.selectedIds.length} onClick={deleteSelected}><Trash2 /></IconButton><button disabled={snapshot.selectedIds.length < 2} onClick={merge}>Merge</button></div><div><button className={snap ? "mode active" : "mode"} onClick={() => setSnap(value => !value)}><Magnet />Snap</button><button className={follow ? "mode active" : "mode"} onClick={() => setFollow(value => !value)}><Waves />Follow</button><button className={showIssues ? "mode active" : "mode"} onClick={() => setShowIssues(value => !value)}><AlertTriangle />{issues.length} issues</button></div></div>
+      <div className="timeline-toolbar"><div><IconButton label="Create cue at playhead" onClick={createAtCaret}><Plus /></IconButton><button disabled={!activeCue} onClick={() => insertRelative("before")}>Insert before</button><button disabled={!activeCue} onClick={() => insertRelative("after")}>Insert after</button><IconButton label="Split at playhead" disabled={!activeCue} onClick={split}><Scissors /></IconButton><IconButton label="Delete selected" disabled={!snapshot.selectedIds.length} onClick={deleteSelected}><Trash2 /></IconButton><button disabled={snapshot.selectedIds.length < 2} onClick={merge}>Merge</button><button onClick={() => { if (!snapshot.selectedIds.length) setTimingScope("all"); setTimingOpen(true); }}><Clock3 />Timing</button></div><div><button className={snap ? "mode active" : "mode"} onClick={() => setSnap(value => !value)}><Magnet />Snap</button><button className={follow ? "mode active" : "mode"} onClick={() => setFollow(value => !value)}><Waves />Follow</button><button className={showIssues ? "mode active" : "mode"} onClick={() => setShowIssues(value => !value)}><AlertTriangle />{issues.length} issues</button></div></div>
       <Timeline engine={engine} cues={cues} selectedIds={snapshot.selectedIds} currentTimeUs={currentTimeUs} durationUs={durationUs} peaks={peaks} follow={follow} snap={snap} onSeek={seek} />
     </section>
 
     {showIssues && <aside className="issues-panel panel"><div className="panel-heading"><strong>Quality</strong><button onClick={() => setShowIssues(false)}>Close</button></div><div className="issues-list">{issues.map(issue => <button key={issue.id} onClick={() => { engine.select([issue.cueId], issue.cueId); const cue = cues.find(item => item.id === issue.cueId); if (cue) seek(cue.startUs); }}><span className={issue.severity}><AlertTriangle /></span><strong>{issue.rule}</strong><span>{issue.message}</span></button>)}{!issues.length && <div className="quality-clear"><Check />No issues found in the current profile.</div>}</div></aside>}
     {shortcutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShortcutOpen(false)}><section className="shortcut-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcut-title" onMouseDown={event => event.stopPropagation()}><div className="dialog-heading"><div><strong id="shortcut-title">Keyboard shortcuts</strong><span>Press a key combination to replace a shortcut.</span></div><IconButton label="Close shortcuts" onClick={() => setShortcutOpen(false)}><X /></IconButton></div><div className="shortcut-list">{(Object.keys(shortcutLabels) as ShortcutAction[]).map(action => { const conflict = Object.entries(shortcuts).some(([other, value]) => other !== action && value === shortcuts[action]); return <label key={action}><span>{shortcutLabels[action]}</span><input aria-label={`${shortcutLabels[action]} shortcut`} readOnly value={shortcuts[action]} className={conflict ? "conflict" : ""} onKeyDown={event => { event.preventDefault(); event.stopPropagation(); if (!["Control", "Meta", "Alt", "Shift"].includes(event.key)) setShortcut(action, eventShortcut(event)); }} />{conflict && <small>Conflict</small>}</label>; })}</div><div className="dialog-footer"><button onClick={() => { setShortcuts(defaultShortcuts); localStorage.removeItem("tinycue-shortcuts"); }}>Restore defaults</button><button className="primary" onClick={() => setShortcutOpen(false)}>Done</button></div></section></div>}
+    {exportOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setExportOpen(false)}><section className="shortcut-dialog export-dialog" role="dialog" aria-modal="true" aria-labelledby="export-title" onMouseDown={event => event.stopPropagation()}><div className="dialog-heading"><div><strong id="export-title">Export subtitles</strong><span>Choose the output format and scope.</span></div><IconButton label="Close export" onClick={() => setExportOpen(false)}><X /></IconButton></div><div className="export-options"><label>Format<select value={exportFormat} onChange={event => setExportFormat(event.target.value as SubtitleFormat)}><option value="srt">SRT</option><option value="vtt">WebVTT</option><option value="txt">Plain text</option></select></label><label>Scope<select value={exportScope} onChange={event => setExportScope(event.target.value as "all" | "selected")}><option value="all">All cues ({cues.length})</option><option value="selected" disabled={!snapshot.selectedIds.length}>Selected cues ({snapshot.selectedIds.length})</option></select></label><label>Line endings<select value={exportLineEnding} onChange={event => setExportLineEnding(event.target.value as "lf" | "crlf")}><option value="lf">LF (macOS/Linux)</option><option value="crlf">CRLF (Windows)</option></select></label>{exportFormat === "srt" && <label>First subtitle number<input type="number" min="1" step="1" value={exportStartNumber} onChange={event => setExportStartNumber(Math.max(1, Math.trunc(Number(event.target.value) || 1)))} /></label>}</div><div className="dialog-footer"><button onClick={copyExport}>Copy to clipboard</button><button className="primary" onClick={() => download(exportFormat)}>Download</button></div></section></div>}
+    {timingOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setTimingOpen(false)}><section className="shortcut-dialog timing-dialog" role="dialog" aria-modal="true" aria-labelledby="timing-title" onMouseDown={event => event.stopPropagation()}><div className="dialog-heading"><div><strong id="timing-title">Batch timing</strong><span>Apply one undoable change to all or selected cues.</span></div><IconButton label="Close timing tools" onClick={() => setTimingOpen(false)}><X /></IconButton></div><div className="timing-options"><label>Scope<select value={timingScope} onChange={event => setTimingScope(event.target.value as "all" | "selected")}><option value="all">All cues ({cues.length})</option><option value="selected" disabled={!snapshot.selectedIds.length}>Selected cues ({snapshot.selectedIds.length})</option></select></label><fieldset><legend>Subtitle delay</legend><label>Signed milliseconds<input type="number" step="10" value={delayMs} onChange={event => setDelayMs(Number(event.target.value) || 0)} /></label><button className="primary" onClick={applyDelay}>Apply delay</button></fieldset><fieldset><legend>Frame-rate conversion</legend><label>Source FPS<select value={sourceFrameRate} onChange={event => setSourceFrameRate(event.target.value as FrameRateId)}>{FRAME_RATES.map(rate => <option key={rate.id} value={rate.id}>{rate.label}</option>)}</select></label><label>Target FPS<select value={targetFrameRate} onChange={event => setTargetFrameRate(event.target.value as FrameRateId)}>{FRAME_RATES.map(rate => <option key={rate.id} value={rate.id}>{rate.label}</option>)}</select></label><button className="primary" onClick={convertFrameRate}>Convert timing</button></fieldset></div><div className="dialog-footer"><button onClick={() => setTimingOpen(false)}>Close</button></div></section></div>}
     <footer className="statusbar"><span>{notice}</span><span>Shift magnetizes to playhead · Alt bypasses snapping · Enter new cue · I/O set in/out</span></footer>
   </main>;
 }

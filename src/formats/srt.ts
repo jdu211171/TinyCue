@@ -1,6 +1,6 @@
 import { createCue, type EditorProject } from "../editor-core/types";
 import { formatClock, parseClock } from "../editor-core/time";
-import { projectFromCues, type ParseResult, type ParseWarning } from "./common";
+import { applyLineEnding, projectFromCues, type ParseResult, type ParseWarning, type SerializeOptions } from "./common";
 
 export function parseSrt(input: string, fileName = "subtitles.srt"): ParseResult {
   const normalized = input.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
@@ -22,7 +22,9 @@ export function parseSrt(input: string, fileName = "subtitles.srt"): ParseResult
   return { project: projectFromCues(cues, fileName, "srt"), warnings };
 }
 
-export function serializeSrt(project: EditorProject, selectedIds?: Set<string>): string {
-  const cues = project.tracks[0].cues.filter(cue => !selectedIds || selectedIds.has(cue.id));
-  return cues.map((cue, index) => `${index + 1}\n${formatClock(cue.startUs, ",")} --> ${formatClock(cue.endUs, ",")}\n${cue.text}`).join("\n\n") + (cues.length ? "\n" : "");
+export function serializeSrt(project: EditorProject, options: SerializeOptions = {}): string {
+  const cues = project.tracks[0].cues.filter(cue => !options.selectedIds || options.selectedIds.has(cue.id));
+  const startNumber = Number.isSafeInteger(options.startNumber) && Number(options.startNumber) > 0 ? Number(options.startNumber) : 1;
+  const output = cues.map((cue, index) => `${index + startNumber}\n${formatClock(cue.startUs, ",")} --> ${formatClock(cue.endUs, ",")}\n${cue.text}`).join("\n\n") + (cues.length ? "\n" : "");
+  return applyLineEnding(output, options.lineEnding);
 }

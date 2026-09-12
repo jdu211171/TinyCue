@@ -1,6 +1,6 @@
 import { createCue, type EditorProject } from "../editor-core/types";
 import { formatClock, parseClock } from "../editor-core/time";
-import { projectFromCues, type ParseResult, type ParseWarning } from "./common";
+import { applyLineEnding, projectFromCues, type ParseResult, type ParseWarning, type SerializeOptions } from "./common";
 
 export function parseVtt(input: string, fileName = "subtitles.vtt"): ParseResult {
   const normalized = input.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
@@ -19,7 +19,8 @@ export function parseVtt(input: string, fileName = "subtitles.vtt"): ParseResult
   return { project: projectFromCues(cues, fileName, "vtt"), warnings };
 }
 
-export function serializeVtt(project: EditorProject, selectedIds?: Set<string>): string {
-  const cues = project.tracks[0].cues.filter(cue => !selectedIds || selectedIds.has(cue.id));
-  return "WEBVTT\n\n" + cues.map(cue => `${formatClock(cue.startUs)} --> ${formatClock(cue.endUs)}\n${cue.text}`).join("\n\n") + (cues.length ? "\n" : "");
+export function serializeVtt(project: EditorProject, options: SerializeOptions = {}): string {
+  const cues = project.tracks[0].cues.filter(cue => !options.selectedIds || options.selectedIds.has(cue.id));
+  const output = "WEBVTT\n\n" + cues.map(cue => `${formatClock(cue.startUs)} --> ${formatClock(cue.endUs)}\n${cue.text}`).join("\n\n") + (cues.length ? "\n" : "");
+  return applyLineEnding(output, options.lineEnding);
 }

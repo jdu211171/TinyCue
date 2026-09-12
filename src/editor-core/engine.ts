@@ -51,12 +51,23 @@ export class EditorEngine {
       }
       case "move-cues": {
         const ids = new Set(command.ids); const targets = cues.filter(cue => ids.has(cue.id) && !cue.locked);
-        const minStart = Math.min(...targets.map(cue => cue.startUs)); const delta = Math.max(command.deltaUs, -minStart);
+        if (!targets.length) return { project };
+        const minStart = Math.min(...targets.map(cue => cue.startUs)); const delta = Math.max(Math.round(command.deltaUs), -minStart);
         targets.forEach(cue => { cue.startUs += delta; cue.endUs += delta; }); cues.sort(byTime); return { project };
       }
       case "shift-all": {
-        const minStart = cues.length ? Math.min(...cues.map(cue => cue.startUs)) : 0; const delta = Math.max(command.deltaUs, -minStart);
-        cues.filter(cue => !cue.locked).forEach(cue => { cue.startUs += delta; cue.endUs += delta; }); return { project };
+        const targets = cues.filter(cue => !cue.locked); if (!targets.length) return { project };
+        const minStart = Math.min(...targets.map(cue => cue.startUs)); const delta = Math.max(Math.round(command.deltaUs), -minStart);
+        targets.forEach(cue => { cue.startUs += delta; cue.endUs += delta; }); cues.sort(byTime); return { project };
+      }
+      case "scale-cues": {
+        if (!Number.isSafeInteger(command.numerator) || !Number.isSafeInteger(command.denominator) || command.numerator <= 0 || command.denominator <= 0) return { project };
+        const ids = new Set(command.ids); const targets = cues.filter(cue => ids.has(cue.id) && !cue.locked);
+        targets.forEach(cue => {
+          cue.startUs = Math.round(cue.startUs * command.numerator / command.denominator);
+          cue.endUs = Math.max(cue.startUs + 1, Math.round(cue.endUs * command.numerator / command.denominator));
+        });
+        cues.sort(byTime); return { project };
       }
       case "split-cue": {
         const index = cues.findIndex(cue => cue.id === command.id); const cue = cues[index];

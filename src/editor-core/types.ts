@@ -25,7 +25,7 @@ export interface EditorProject {
   schemaVersion: 1;
   title: string;
   sourceFileName: string | null;
-  sourceFormat: "srt" | "vtt" | null;
+  sourceFormat: "srt" | "vtt" | "txt" | null;
   mediaName: string | null;
   tracks: SubtitleTrack[];
   createdAt: number;
@@ -49,6 +49,7 @@ export type EditorCommand =
   | { type: "update-cue"; id: string; patch: Partial<Omit<SubtitleCue, "id">>; label?: string }
   | { type: "delete-cues"; ids: string[] }
   | { type: "move-cues"; ids: string[]; deltaUs: number }
+  | { type: "scale-cues"; ids: string[]; numerator: number; denominator: number }
   | { type: "split-cue"; id: string; atUs: number; textOffset?: number }
   | { type: "merge-cues"; ids: string[] }
   | { type: "shift-all"; deltaUs: number };
