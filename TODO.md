@@ -10,3 +10,4 @@
 - [x] Add batch shift and frame-rate conversion tools (ED-021, ED-026, ED-027).
 - [ ] Add undoable automatic line break and unbreak commands (TX-003).
 - [ ] Add persistent resizable workspace panels (UI-001).
+- [x] Preserve the cue being edited and allow Ctrl+Space playback control.

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock3, Download, FilePlus2, FolderOpen, Keyboard, Magnet, Pause, Play, Plus, Redo2, Scissors, SkipBack, SkipForward, Trash2, Undo2, Video, Waves, X } from "lucide-react";
 import { EditorEngine } from "./editor-core/engine";
 import { FRAME_RATES, frameRateScale, type FrameRateId } from "./editor-core/frameRates";
-import { shouldDeleteSelectedCues } from "./editor-core/keyboard";
+import { shouldDeleteSelectedCues, shouldTogglePlaybackWhileEditing } from "./editor-core/keyboard";
 import { createCue, createProject, newId, type SubtitleCue } from "./editor-core/types";
 import { formatClock, parseClock, secondsToUs, usToSeconds } from "./editor-core/time";
 import { parseSubtitles, serializeSubtitles, type SubtitleFormat } from "./formats";
@@ -21,6 +21,7 @@ const eventShortcut = (event: KeyboardEvent | React.KeyboardEvent, ignoreShift =
   const parts: string[] = []; if (event.ctrlKey || event.metaKey) parts.push("Mod"); if (event.altKey) parts.push("Alt"); if (event.shiftKey && !ignoreShift) parts.push("Shift");
   const key = event.code === "Space" ? "Space" : event.key.length === 1 ? event.key.toUpperCase() : event.key; return [...parts, key].join("+");
 };
+const isEditableElement = (target: EventTarget | null) => target instanceof HTMLElement && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable);
 
 function IconButton({ label, disabled, active, onClick, children }: { label: string; disabled?: boolean; active?: boolean; onClick(): void; children: React.ReactNode }) {
   return <button className={`icon-button${active ? " active" : ""}`} aria-label={label} title={label} disabled={disabled} onClick={onClick}>{children}</button>;
@@ -82,6 +83,7 @@ export default function App() {
   const [timingOpen, setTimingOpen] = useState(false); const [timingScope, setTimingScope] = useState<"all" | "selected">("all"); const [delayMs, setDelayMs] = useState(0);
   const [sourceFrameRate, setSourceFrameRate] = useState<FrameRateId>("25/1"); const [targetFrameRate, setTargetFrameRate] = useState<FrameRateId>("24000/1001");
   const [shortcutOpen, setShortcutOpen] = useState(false);
+  const [editableFocus, setEditableFocus] = useState(false);
   const [shortcuts, setShortcuts] = useState<Record<ShortcutAction, string>>(() => {
     try { return { ...defaultShortcuts, ...JSON.parse(localStorage.getItem("tinycue-shortcuts") ?? "{}") }; } catch { return defaultShortcuts; }
   });
@@ -91,9 +93,15 @@ export default function App() {
   useEffect(() => { if (!snapshot.dirty) return; const revision = snapshot.revision; const timer = setTimeout(() => saveProject(snapshot.project).then(() => { engine.markSaved(revision); setNotice("Autosaved locally"); }).catch(() => setNotice("Autosave unavailable")), 700); return () => clearTimeout(timer); }, [snapshot.project, snapshot.dirty, snapshot.revision]);
   useEffect(() => { const warn = (event: BeforeUnloadEvent) => { if (snapshot.dirty) event.preventDefault(); }; addEventListener("beforeunload", warn); return () => removeEventListener("beforeunload", warn); }, [snapshot.dirty]);
   useEffect(() => {
-    if (!playing || !playbackCue || engine.getSnapshot().activeCueId === playbackCue.id) return;
+    const updateEditableFocus = () => setEditableFocus(isEditableElement(document.activeElement));
+    const handleFocusOut = () => queueMicrotask(updateEditableFocus);
+    addEventListener("focusin", updateEditableFocus); addEventListener("focusout", handleFocusOut);
+    return () => { removeEventListener("focusin", updateEditableFocus); removeEventListener("focusout", handleFocusOut); };
+  }, []);
+  useEffect(() => {
+    if (!playing || editableFocus || !playbackCue || engine.getSnapshot().activeCueId === playbackCue.id) return;
     engine.select([playbackCue.id], playbackCue.id);
-  }, [playing, playbackCue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [playing, editableFocus, playbackCue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const seek = useCallback((timeUs: number) => { const safe = Math.max(0, Math.min(durationUs, timeUs)); setCurrentTimeUs(safe); if (videoRef.current) videoRef.current.currentTime = usToSeconds(safe); }, [durationUs]);
   const togglePlay = () => { const video = videoRef.current; if (!video) return; if (video.paused) video.play().catch(() => setNotice("The browser could not play this media")); else video.pause(); };
@@ -178,11 +186,13 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      const editing = event.target instanceof HTMLElement && (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target.isContentEditable);
+      const editing = isEditableElement(event.target);
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? engine.redo() : engine.undo(); return; }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); download(snapshot.project.sourceFormat ?? "srt"); return; }
+      if (shortcutOpen) return;
+      if (editing && shouldTogglePlaybackWhileEditing(event.code, event.ctrlKey, event.metaKey, event.altKey)) { event.preventDefault(); togglePlay(); return; }
       const shortcut = eventShortcut(event);
-      if (shortcutOpen || (editing && !shortcut.startsWith("Mod+"))) return;
+      if (editing && !shortcut.startsWith("Mod+")) return;
       if (shortcut === shortcuts.play) { event.preventDefault(); togglePlay(); }
       else if (shortcut === shortcuts.create) { event.preventDefault(); createAtCaret(); }
       else if (shortcut === shortcuts.insertBefore) { event.preventDefault(); insertRelative("before"); }
@@ -239,9 +249,9 @@ export default function App() {
     </section>
 
     {showIssues && <aside className="issues-panel panel"><div className="panel-heading"><strong>Quality</strong><button onClick={() => setShowIssues(false)}>Close</button></div><div className="issues-list">{issues.map(issue => <button key={issue.id} onClick={() => { engine.select([issue.cueId], issue.cueId); const cue = cues.find(item => item.id === issue.cueId); if (cue) seek(cue.startUs); }}><span className={issue.severity}><AlertTriangle /></span><strong>{issue.rule}</strong><span>{issue.message}</span></button>)}{!issues.length && <div className="quality-clear"><Check />No issues found in the current profile.</div>}</div></aside>}
-    {shortcutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShortcutOpen(false)}><section className="shortcut-dialog shortcut-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcut-title" onMouseDown={event => event.stopPropagation()}><div className="dialog-heading"><div><strong id="shortcut-title">Keyboard shortcuts</strong><span>Press a key combination to replace a shortcut.</span></div><IconButton label="Close shortcuts" onClick={() => setShortcutOpen(false)}><X /></IconButton></div><div className="shortcut-list" tabIndex={0} aria-label="Keyboard shortcut settings">{(Object.keys(shortcutLabels) as ShortcutAction[]).map(action => { const conflict = Object.entries(shortcuts).some(([other, value]) => other !== action && value === shortcuts[action]); return <label key={action}><span>{shortcutLabels[action]}</span><input aria-label={`${shortcutLabels[action]} shortcut`} readOnly value={shortcuts[action]} className={conflict ? "conflict" : ""} onKeyDown={event => { event.preventDefault(); event.stopPropagation(); if (!["Control", "Meta", "Alt", "Shift"].includes(event.key)) setShortcut(action, eventShortcut(event)); }} />{conflict && <small>Conflict</small>}</label>; })}</div><div className="dialog-footer"><button onClick={() => { setShortcuts(defaultShortcuts); localStorage.removeItem("tinycue-shortcuts"); }}>Restore defaults</button><button className="primary" onClick={() => setShortcutOpen(false)}>Done</button></div></section></div>}
+    {shortcutOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShortcutOpen(false)}><section className="shortcut-dialog shortcut-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcut-title" onMouseDown={event => event.stopPropagation()}><div className="dialog-heading"><div><strong id="shortcut-title">Keyboard shortcuts</strong><span>Press a key combination to replace a shortcut. Ctrl+Space controls playback while editing.</span></div><IconButton label="Close shortcuts" onClick={() => setShortcutOpen(false)}><X /></IconButton></div><div className="shortcut-list" tabIndex={0} aria-label="Keyboard shortcut settings">{(Object.keys(shortcutLabels) as ShortcutAction[]).map(action => { const conflict = Object.entries(shortcuts).some(([other, value]) => other !== action && value === shortcuts[action]); return <label key={action}><span>{shortcutLabels[action]}</span><input aria-label={`${shortcutLabels[action]} shortcut`} readOnly value={shortcuts[action]} className={conflict ? "conflict" : ""} onKeyDown={event => { event.preventDefault(); event.stopPropagation(); if (!["Control", "Meta", "Alt", "Shift"].includes(event.key)) setShortcut(action, eventShortcut(event)); }} />{conflict && <small>Conflict</small>}</label>; })}</div><div className="dialog-footer"><button onClick={() => { setShortcuts(defaultShortcuts); localStorage.removeItem("tinycue-shortcuts"); }}>Restore defaults</button><button className="primary" onClick={() => setShortcutOpen(false)}>Done</button></div></section></div>}
     {exportOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setExportOpen(false)}><section className="shortcut-dialog export-dialog" role="dialog" aria-modal="true" aria-labelledby="export-title" onMouseDown={event => event.stopPropagation()}><div className="dialog-heading"><div><strong id="export-title">Export subtitles</strong><span>Choose the output format and scope.</span></div><IconButton label="Close export" onClick={() => setExportOpen(false)}><X /></IconButton></div><div className="export-options"><label>Format<select value={exportFormat} onChange={event => setExportFormat(event.target.value as SubtitleFormat)}><option value="srt">SRT</option><option value="vtt">WebVTT</option><option value="txt">Plain text</option></select></label><label>Scope<select value={exportScope} onChange={event => setExportScope(event.target.value as "all" | "selected")}><option value="all">All cues ({cues.length})</option><option value="selected" disabled={!snapshot.selectedIds.length}>Selected cues ({snapshot.selectedIds.length})</option></select></label><label>Line endings<select value={exportLineEnding} onChange={event => setExportLineEnding(event.target.value as "lf" | "crlf")}><option value="lf">LF (macOS/Linux)</option><option value="crlf">CRLF (Windows)</option></select></label>{exportFormat === "srt" && <label>First subtitle number<input type="number" min="1" step="1" value={exportStartNumber} onChange={event => setExportStartNumber(Math.max(1, Math.trunc(Number(event.target.value) || 1)))} /></label>}</div><div className="dialog-footer"><button onClick={copyExport}>Copy to clipboard</button><button className="primary" onClick={() => download(exportFormat)}>Download</button></div></section></div>}
     {timingOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setTimingOpen(false)}><section className="shortcut-dialog timing-dialog" role="dialog" aria-modal="true" aria-labelledby="timing-title" onMouseDown={event => event.stopPropagation()}><div className="dialog-heading"><div><strong id="timing-title">Batch timing</strong><span>Apply one undoable change to all or selected cues.</span></div><IconButton label="Close timing tools" onClick={() => setTimingOpen(false)}><X /></IconButton></div><div className="timing-options"><label>Scope<select value={timingScope} onChange={event => setTimingScope(event.target.value as "all" | "selected")}><option value="all">All cues ({cues.length})</option><option value="selected" disabled={!snapshot.selectedIds.length}>Selected cues ({snapshot.selectedIds.length})</option></select></label><fieldset><legend>Subtitle delay</legend><label>Signed milliseconds<input type="number" step="10" value={delayMs} onChange={event => setDelayMs(Number(event.target.value) || 0)} /></label><button className="primary" onClick={applyDelay}>Apply delay</button></fieldset><fieldset><legend>Frame-rate conversion</legend><label>Source FPS<select value={sourceFrameRate} onChange={event => setSourceFrameRate(event.target.value as FrameRateId)}>{FRAME_RATES.map(rate => <option key={rate.id} value={rate.id}>{rate.label}</option>)}</select></label><label>Target FPS<select value={targetFrameRate} onChange={event => setTargetFrameRate(event.target.value as FrameRateId)}>{FRAME_RATES.map(rate => <option key={rate.id} value={rate.id}>{rate.label}</option>)}</select></label><button className="primary" onClick={convertFrameRate}>Convert timing</button></fieldset></div><div className="dialog-footer"><button onClick={() => setTimingOpen(false)}>Close</button></div></section></div>}
-    <footer className="statusbar"><span>{notice}</span><span>Backspace/Delete remove selected · Shift magnetizes to playhead · Alt bypasses snapping · Enter new cue · I/O set in/out</span></footer>
+    <footer className="statusbar"><span>{notice}</span><span>Ctrl+Space plays while editing · Backspace/Delete remove selected · Shift magnetizes to playhead · Alt bypasses snapping · Enter new cue · I/O set in/out</span></footer>
   </main>;
 }

@@ -2,3 +2,7 @@ export function shouldDeleteSelectedCues(shortcut: string, configuredShortcut: s
   if (editing || selectionCount === 0) return false;
   return shortcut === configuredShortcut || shortcut === "Backspace";
 }
+
+export function shouldTogglePlaybackWhileEditing(code: string, ctrlKey: boolean, metaKey: boolean, altKey: boolean): boolean {
+  return code === "Space" && ctrlKey && !metaKey && !altKey;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldDeleteSelectedCues } from "./keyboard";
+import { shouldDeleteSelectedCues, shouldTogglePlaybackWhileEditing } from "./keyboard";
 
 describe("cue deletion shortcuts", () => {
   it("accepts Backspace and the configured delete shortcut for selected cues", () => {
@@ -11,5 +11,15 @@ describe("cue deletion shortcuts", () => {
     expect(shouldDeleteSelectedCues("Backspace", "Delete", true, 1)).toBe(false);
     expect(shouldDeleteSelectedCues("Delete", "Delete", true, 1)).toBe(false);
     expect(shouldDeleteSelectedCues("Backspace", "Delete", false, 0)).toBe(false);
+  });
+});
+
+describe("playback while editing", () => {
+  it("uses Ctrl+Space without taking plain Space away from text entry", () => {
+    expect(shouldTogglePlaybackWhileEditing("Space", true, false, false)).toBe(true);
+    expect(shouldTogglePlaybackWhileEditing("Space", false, false, false)).toBe(false);
+    expect(shouldTogglePlaybackWhileEditing("Space", false, true, false)).toBe(false);
+    expect(shouldTogglePlaybackWhileEditing("Space", true, false, true)).toBe(false);
+    expect(shouldTogglePlaybackWhileEditing("Enter", true, false, false)).toBe(false);
   });
 });
