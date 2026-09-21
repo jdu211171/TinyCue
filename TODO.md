@@ -6,6 +6,7 @@
 - [ ] Complete browser verification for clipboard export and translation-aware scope (IO-015, IO-016).
 - [x] Delete selected cue rows with Backspace outside editable fields.
 - [x] Make the keyboard-shortcuts dialog reliably scrollable.
+- [x] Auto-open the cue under the playhead while media is playing.
 - [x] Add batch shift and frame-rate conversion tools (ED-021, ED-026, ED-027).
 - [ ] Add undoable automatic line break and unbreak commands (TX-003).
 - [ ] Add persistent resizable workspace panels (UI-001).

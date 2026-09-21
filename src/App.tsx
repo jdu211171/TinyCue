@@ -90,6 +90,10 @@ export default function App() {
   useEffect(() => { latestProject().then(project => { if (project && !snapshot.dirty && !cues.length) { engine.dispatch({ type: "replace-project", project }); engine.markSaved(); setNotice(`Recovered ${project.title}`); } }).catch(() => undefined); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!snapshot.dirty) return; const revision = snapshot.revision; const timer = setTimeout(() => saveProject(snapshot.project).then(() => { engine.markSaved(revision); setNotice("Autosaved locally"); }).catch(() => setNotice("Autosave unavailable")), 700); return () => clearTimeout(timer); }, [snapshot.project, snapshot.dirty, snapshot.revision]);
   useEffect(() => { const warn = (event: BeforeUnloadEvent) => { if (snapshot.dirty) event.preventDefault(); }; addEventListener("beforeunload", warn); return () => removeEventListener("beforeunload", warn); }, [snapshot.dirty]);
+  useEffect(() => {
+    if (!playing || !playbackCue || engine.getSnapshot().activeCueId === playbackCue.id) return;
+    engine.select([playbackCue.id], playbackCue.id);
+  }, [playing, playbackCue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const seek = useCallback((timeUs: number) => { const safe = Math.max(0, Math.min(durationUs, timeUs)); setCurrentTimeUs(safe); if (videoRef.current) videoRef.current.currentTime = usToSeconds(safe); }, [durationUs]);
   const togglePlay = () => { const video = videoRef.current; if (!video) return; if (video.paused) video.play().catch(() => setNotice("The browser could not play this media")); else video.pause(); };
