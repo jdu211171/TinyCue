@@ -33,4 +33,13 @@ describe("EditorEngine", () => {
     engine.undo(); expect(engine.getSnapshot().project.tracks[0].cues[0]).toMatchObject({ id: cue.id, startUs: 24_000_000, endUs: 48_000_000 });
     engine.redo(); expect(engine.getSnapshot().project.tracks[0].cues[0].startUs).toBe(24_024_000);
   });
+  it("deletes selected cues and restores them with undo", () => {
+    const project = createProject(); const first = createCue(0, 1_000_000, "First"); const second = createCue(2_000_000, 3_000_000, "Second");
+    project.tracks[0].cues = [first, second]; const engine = new EditorEngine(project); engine.select([first.id], first.id);
+    engine.dispatch({ type: "delete-cues", ids: engine.getSnapshot().selectedIds });
+    expect(engine.getSnapshot().project.tracks[0].cues.map(cue => cue.id)).toEqual([second.id]);
+    engine.undo();
+    expect(engine.getSnapshot().project.tracks[0].cues.map(cue => cue.id)).toEqual([first.id, second.id]);
+    expect(engine.getSnapshot().selectedIds).toEqual([first.id]);
+  });
 });
