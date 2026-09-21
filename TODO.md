@@ -11,3 +11,4 @@
 - [ ] Add undoable automatic line break and unbreak commands (TX-003).
 - [ ] Add persistent resizable workspace panels (UI-001).
 - [x] Preserve the cue being edited and allow Ctrl+Space playback control.
+- [x] Render a detailed audio waveform and animate the playback caret smoothly.

@@ -10,7 +10,7 @@ import { latestProject, saveProject } from "./persistence/database";
 import { parseProjectArchive, projectArchiveFileName, serializeProjectArchive } from "./persistence/projectArchive";
 import { cueCps, validateProject } from "./quality/checks";
 import { Timeline } from "./timeline/Timeline";
-import { createWaveform } from "./media/waveform";
+import { createWaveform, type WaveformData } from "./media/waveform";
 import "./styles.css";
 
 const engine = new EditorEngine();
@@ -76,7 +76,7 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null); const documentPicker = useRef<HTMLInputElement>(null); const videoPicker = useRef<HTMLInputElement>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null); const [durationUs, setDurationUs] = useState(60_000_000); const [currentTimeUs, setCurrentTimeUs] = useState(0);
   const [playing, setPlaying] = useState(false); const [follow, setFollow] = useState(true); const [snap, setSnap] = useState(true); const [loop, setLoop] = useState(false);
-  const [peaks, setPeaks] = useState<number[]>([]); const [notice, setNotice] = useState("Ready"); const [showIssues, setShowIssues] = useState(() => innerWidth > 700);
+  const [waveform, setWaveform] = useState<WaveformData | null>(null); const [notice, setNotice] = useState("Ready"); const [showIssues, setShowIssues] = useState(() => innerWidth > 700);
   const [exportFormat, setExportFormat] = useState<SubtitleFormat>("srt");
   const [exportOpen, setExportOpen] = useState(false); const [exportScope, setExportScope] = useState<"all" | "selected">("all");
   const [exportLineEnding, setExportLineEnding] = useState<"lf" | "crlf">("lf"); const [exportStartNumber, setExportStartNumber] = useState(1);
@@ -102,6 +102,23 @@ export default function App() {
     if (!playing || editableFocus || !playbackCue || engine.getSnapshot().activeCueId === playbackCue.id) return;
     engine.select([playbackCue.id], playbackCue.id);
   }, [playing, editableFocus, playbackCue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!playing) return;
+    let animationFrame = 0;
+    const updatePlaybackClock = () => {
+      const video = videoRef.current;
+      if (!video || video.paused) return;
+      let timeUs = secondsToUs(video.currentTime);
+      if (loop && activeCue && timeUs >= activeCue.endUs) {
+        video.currentTime = usToSeconds(activeCue.startUs);
+        timeUs = activeCue.startUs;
+      }
+      setCurrentTimeUs(timeUs);
+      animationFrame = requestAnimationFrame(updatePlaybackClock);
+    };
+    animationFrame = requestAnimationFrame(updatePlaybackClock);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [playing, loop, activeCue?.id, activeCue?.startUs, activeCue?.endUs]);
 
   const seek = useCallback((timeUs: number) => { const safe = Math.max(0, Math.min(durationUs, timeUs)); setCurrentTimeUs(safe); if (videoRef.current) videoRef.current.currentTime = usToSeconds(safe); }, [durationUs]);
   const togglePlay = () => { const video = videoRef.current; if (!video) return; if (video.paused) video.play().catch(() => setNotice("The browser could not play this media")); else video.pause(); };
@@ -120,10 +137,10 @@ export default function App() {
     }
   };
   const openVideo = async (file: File) => {
-    if (videoUrl) URL.revokeObjectURL(videoUrl); const url = URL.createObjectURL(file); setVideoUrl(url); setPeaks([]); setNotice(`Opened ${file.name} · building waveform…`);
+    if (videoUrl) URL.revokeObjectURL(videoUrl); const url = URL.createObjectURL(file); setVideoUrl(url); setWaveform(null); setNotice(`Opened ${file.name} · building waveform…`);
     engine.dispatch({ type: "update-project", patch: { mediaName: file.name } });
     if (file.size > 150 * 1024 * 1024) setNotice("Video ready · waveform deferred for this large file");
-    else createWaveform(file).then(value => { setPeaks(value); setNotice("Waveform ready"); }).catch(() => setNotice("Video ready · waveform unavailable for this codec"));
+    else createWaveform(file).then(value => { setWaveform(value); setNotice("Waveform ready"); }).catch(() => setNotice("Video ready · waveform unavailable for this codec"));
   };
   const serializeExport = (format: SubtitleFormat) => serializeSubtitles(snapshot.project, format, { selectedIds: exportScope === "selected" ? new Set(snapshot.selectedIds) : undefined, lineEnding: exportLineEnding, startNumber: exportStartNumber });
   const exportCueCount = exportScope === "selected" ? snapshot.selectedIds.length : cues.length;
@@ -234,7 +251,7 @@ export default function App() {
     <section className="workspace">
       <div className="left-stack">
         <section className="video-panel panel">
-          {videoUrl ? <div className="video-stage"><video ref={videoRef} src={videoUrl} onLoadedMetadata={event => setDurationUs(secondsToUs(event.currentTarget.duration))} onTimeUpdate={event => { const time = secondsToUs(event.currentTarget.currentTime); setCurrentTimeUs(time); if (loop && activeCue && time >= activeCue.endUs) seek(activeCue.startUs); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} />{playbackCue && <div className="subtitle-preview">{playbackCue.text.split("\n").map((line, index) => <span key={index}>{line}</span>)}</div>}</div> : <button className="video-empty" onClick={() => videoPicker.current?.click()}><Video /><strong>Open a local video</strong><span>Your media stays in this browser.</span></button>}
+          {videoUrl ? <div className="video-stage"><video ref={videoRef} src={videoUrl} onLoadedMetadata={event => setDurationUs(secondsToUs(event.currentTarget.duration))} onTimeUpdate={event => { if (event.currentTarget.paused) setCurrentTimeUs(secondsToUs(event.currentTarget.currentTime)); }} onPlay={() => setPlaying(true)} onPause={event => { setPlaying(false); setCurrentTimeUs(secondsToUs(event.currentTarget.currentTime)); }} />{playbackCue && <div className="subtitle-preview">{playbackCue.text.split("\n").map((line, index) => <span key={index}>{line}</span>)}</div>}</div> : <button className="video-empty" onClick={() => videoPicker.current?.click()}><Video /><strong>Open a local video</strong><span>Your media stays in this browser.</span></button>}
           <div className="transport"><IconButton label="Previous cue" onClick={() => { const prior = [...cues].reverse().find(cue => cue.startUs < currentTimeUs - 1); if (prior) { engine.select([prior.id], prior.id); seek(prior.startUs); } }}><ChevronLeft /></IconButton><IconButton label="Frame backward" onClick={() => seek(currentTimeUs - 40_000)}><SkipBack /></IconButton><IconButton label={playing ? "Pause" : "Play"} onClick={togglePlay}>{playing ? <Pause /> : <Play />}</IconButton><IconButton label="Frame forward" onClick={() => seek(currentTimeUs + 40_000)}><SkipForward /></IconButton><IconButton label="Next cue" onClick={() => { const next = cues.find(cue => cue.startUs > currentTimeUs + 1); if (next) { engine.select([next.id], next.id); seek(next.startUs); } }}><ChevronRight /></IconButton><span className="transport-time">{formatClock(currentTimeUs)} <small>/ {formatClock(durationUs)}</small></span><select aria-label="Playback speed" defaultValue="1" onChange={event => { if (videoRef.current) videoRef.current.playbackRate = +event.target.value; }}><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select><button className={loop ? "mode active" : "mode"} onClick={() => setLoop(value => !value)}>Loop cue</button></div>
         </section>
         <Inspector cue={activeCue} />
@@ -245,7 +262,7 @@ export default function App() {
 
     <section className="timeline-panel panel">
       <div className="timeline-toolbar"><div><IconButton label="Create cue at playhead" onClick={createAtCaret}><Plus /></IconButton><button disabled={!activeCue} onClick={() => insertRelative("before")}>Insert before</button><button disabled={!activeCue} onClick={() => insertRelative("after")}>Insert after</button><IconButton label="Split at playhead" disabled={!activeCue} onClick={split}><Scissors /></IconButton><IconButton label="Delete selected" disabled={!snapshot.selectedIds.length} onClick={deleteSelected}><Trash2 /></IconButton><button disabled={snapshot.selectedIds.length < 2} onClick={merge}>Merge</button><button onClick={() => { if (!snapshot.selectedIds.length) setTimingScope("all"); setTimingOpen(true); }}><Clock3 />Timing</button></div><div><button className={snap ? "mode active" : "mode"} onClick={() => setSnap(value => !value)}><Magnet />Snap</button><button className={follow ? "mode active" : "mode"} onClick={() => setFollow(value => !value)}><Waves />Follow</button><button className={showIssues ? "mode active" : "mode"} onClick={() => setShowIssues(value => !value)}><AlertTriangle />{issues.length} issues</button></div></div>
-      <Timeline engine={engine} cues={cues} selectedIds={snapshot.selectedIds} currentTimeUs={currentTimeUs} durationUs={durationUs} peaks={peaks} follow={follow} snap={snap} onSeek={seek} />
+      <Timeline engine={engine} cues={cues} selectedIds={snapshot.selectedIds} currentTimeUs={currentTimeUs} durationUs={durationUs} waveform={waveform} follow={follow} snap={snap} onSeek={seek} />
     </section>
 
     {showIssues && <aside className="issues-panel panel"><div className="panel-heading"><strong>Quality</strong><button onClick={() => setShowIssues(false)}>Close</button></div><div className="issues-list">{issues.map(issue => <button key={issue.id} onClick={() => { engine.select([issue.cueId], issue.cueId); const cue = cues.find(item => item.id === issue.cueId); if (cue) seek(cue.startUs); }}><span className={issue.severity}><AlertTriangle /></span><strong>{issue.rule}</strong><span>{issue.message}</span></button>)}{!issues.length && <div className="quality-clear"><Check />No issues found in the current profile.</div>}</div></aside>}

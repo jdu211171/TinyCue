@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent } from "react";
 import type { EditorEngine } from "../editor-core/engine";
 import type { SubtitleCue } from "../editor-core/types";
+import type { WaveformData } from "../media/waveform";
 import { snapMoveToCaret } from "./snapping";
 
 interface TimelineProps {
@@ -9,7 +10,7 @@ interface TimelineProps {
   selectedIds: string[];
   currentTimeUs: number;
   durationUs: number;
-  peaks: number[];
+  waveform: WaveformData | null;
   follow: boolean;
   snap: boolean;
   onSeek(timeUs: number): void;
@@ -18,7 +19,7 @@ interface TimelineProps {
 type Drag = { kind: "move" | "start" | "end"; cue: SubtitleCue; originX: number; initialStart: number; initialEnd: number };
 const HEADER = 28, WAVE_TOP = 30, WAVE_HEIGHT = 66, CUE_TOP = 104, CUE_HEIGHT = 42;
 
-export function Timeline({ engine, cues, selectedIds, currentTimeUs, durationUs, peaks, follow, snap, onSeek }: TimelineProps) {
+export function Timeline({ engine, cues, selectedIds, currentTimeUs, durationUs, waveform, follow, snap, onSeek }: TimelineProps) {
   const scroller = useRef<HTMLDivElement>(null); const canvas = useRef<HTMLCanvasElement>(null);
   const [pxPerSecond, setPxPerSecond] = useState(100); const [scrollLeft, setScrollLeft] = useState(0); const [drag, setDrag] = useState<Drag | null>(null);
   const [preview, setPreview] = useState<{ startUs: number; endUs: number } | null>(null);
@@ -58,9 +59,23 @@ export function Timeline({ engine, cues, selectedIds, currentTimeUs, durationUs,
       ctx.fillStyle = "#9299a6"; const min = Math.floor(second / 60), sec = second % 60; ctx.fillText(`${min}:${sec.toFixed(secondsPerTick < 1 ? 1 : 0).padStart(2, "0")}`, x + 4, 4);
     }
     ctx.fillStyle = "#0d1014"; ctx.fillRect(0, WAVE_TOP, width, WAVE_HEIGHT);
-    if (peaks.length) {
-      ctx.strokeStyle = "#58a6a6"; ctx.beginPath(); const mid = WAVE_TOP + WAVE_HEIGHT / 2;
-      for (let x = 0; x < width; x++) { const global = scrollLeft + x; const index = Math.floor(global / contentWidth * peaks.length); const peak = peaks[Math.min(peaks.length - 1, Math.max(0, index))] ?? 0; ctx.moveTo(x + .5, mid - peak * 28); ctx.lineTo(x + .5, mid + peak * 28); } ctx.stroke();
+    if (waveform) {
+      const mid = WAVE_TOP + WAVE_HEIGHT / 2; const amplitude = WAVE_HEIGHT * .47 / waveform.normalization;
+      const firstVisibleBin = Math.max(0, Math.floor(startUs / 1_000_000 * waveform.samplesPerSecond));
+      const lastVisibleBin = Math.min(waveform.min.length, Math.ceil(endUs / 1_000_000 * waveform.samplesPerSecond));
+      ctx.strokeStyle = "#293438"; ctx.beginPath(); ctx.moveTo(0, mid + .5); ctx.lineTo(width, mid + .5); ctx.stroke();
+      ctx.fillStyle = "#67a9aa";
+      for (let x = 0; x < width; x++) {
+        const pixelStartUs = (scrollLeft + x) * usPerPixel;
+        const pixelEndUs = pixelStartUs + usPerPixel;
+        const from = Math.max(firstVisibleBin, Math.floor(pixelStartUs / 1_000_000 * waveform.samplesPerSecond));
+        const to = Math.min(lastVisibleBin, Math.max(from + 1, Math.ceil(pixelEndUs / 1_000_000 * waveform.samplesPerSecond)));
+        let low = 0; let high = 0;
+        for (let index = from; index < to; index++) { low = Math.min(low, waveform.min[index] ?? 0); high = Math.max(high, waveform.max[index] ?? 0); }
+        const top = Math.max(WAVE_TOP + 1, mid - high * amplitude);
+        const bottom = Math.min(WAVE_TOP + WAVE_HEIGHT - 1, mid - low * amplitude);
+        if (from < waveform.min.length) ctx.fillRect(x, top, 1, Math.max(1, bottom - top));
+      }
     }
     for (const cue of cues) {
       const shown = drag?.cue.id === cue.id && preview ? { ...cue, ...preview } : cue;
@@ -74,7 +89,7 @@ export function Timeline({ engine, cues, selectedIds, currentTimeUs, durationUs,
     const caret = currentTimeUs / 1_000_000 * pxPerSecond - scrollLeft;
     if (caret >= 0 && caret <= width) { ctx.strokeStyle = "#ffcc66"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(caret + .5, 0); ctx.lineTo(caret + .5, height); ctx.stroke(); ctx.fillStyle = "#ffcc66"; ctx.beginPath(); ctx.moveTo(caret - 5, 0); ctx.lineTo(caret + 5, 0); ctx.lineTo(caret, 7); ctx.fill(); }
     if (snapHint && caret >= 0 && caret <= width) { ctx.font = "600 11px system-ui"; const labelWidth = ctx.measureText(snapHint).width + 14; ctx.fillStyle = "#ffcc66"; ctx.fillRect(Math.min(width - labelWidth - 4, caret + 7), 7, labelWidth, 22); ctx.fillStyle = "#17130a"; ctx.fillText(snapHint, Math.min(width - labelWidth + 3, caret + 14), 12); }
-  }, [cues, currentTimeUs, durationUs, peaks, pxPerSecond, scrollLeft, selected, drag, preview, contentWidth, usPerPixel, snapHint]);
+  }, [cues, currentTimeUs, durationUs, waveform, pxPerSecond, scrollLeft, selected, drag, preview, contentWidth, usPerPixel, snapHint]);
 
   const pointerTime = (event: ReactPointerEvent | ReactMouseEvent) => (event.nativeEvent.offsetX + scrollLeft) * usPerPixel;
   const findHit = (event: ReactPointerEvent) => {
