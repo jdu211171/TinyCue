@@ -1,53 +1,42 @@
-# TinyCue
+# Subtitle Edit Online (Local Clone)
 
-A lightweight, local-first subtitle editor for the browser. Edit SRT and WebVTT files without uploading your media.
+A fully functional, offline-capable local clone of [Subtitle Edit Online](https://www.nikse.dk/subtitleedit/online).
 
-## Run locally
+## Overview
 
-Node.js 20.19 or newer is required.
+This project mirrors the client-side Angular application from `nikse.dk/subtitleedit/online`, packaged with:
+- The full interactive subtitle editing suite (cues, timeline, video player, waveform viewer).
+- Subtitle format conversions (SRT, WebVTT, ASS/SSA, and more).
+- Local asset files and dark-mode Bootstrap styling for complete offline support.
+- A zero-dependency Node.js HTTP server supporting SPA route fallbacks and byte-range requests for smooth local video playback and scrubbing.
 
-```sh
-npm install
-npm run dev
+## Quick Start
+
+### 1. Start the Local Server
+
+```bash
+npm start
 ```
 
-Open <http://127.0.0.1:4173/>.
+Or run directly:
 
-Use `npm test` for the core test suite and `npm run build` to create the production bundle.
+```bash
+node server.js
+```
 
-## Implemented workflow
+Then open your browser at:
+[http://localhost:3000/](http://localhost:3000/)
 
-TinyCue currently supports:
+### 2. Run Verification Tests
 
-- Local video and audio playback without uploading media
-- SRT, WebVTT, and plain-text import, validation, serialization, and download
-- Export controls for selected cues, line endings, SRT numbering, and clipboard copy
-- Validated TinyCue project archive import and export
-- Cue creation, selection, text editing, exact timing, split, merge, and delete
-- Undoable all-cue or selected-cue delay and rational frame-rate conversion
-- Canvas timeline with zoom, scrolling, playhead, waveform, snapping, drag, and resize
-- Frame-sized stepping, playback speed, cue looping, and follow-playback scrolling
-- Undo and redo through the editor command engine
-- Configurable shortcuts with conflict detection and local persistence
-- Clickable quality checks for overlaps, gaps, reading speed, duration, and line limits
-- IndexedDB autosave and crash recovery
-- Responsive desktop and mobile editing layouts
+```bash
+npm test
+```
 
-## Planning documents
+## Features
 
-- [Research and technology study](docs.md)
-- [Product requirements](docs/requirements.md)
-- [System architecture](docs/architecture.md)
-- [Interaction and interface design](docs/ux-design.md)
-- [Delivery roadmap and stage gates](docs/roadmap.md)
-- [Feature parity matrix](docs/feature-matrix.md)
-
-## Source layout
-
-- `src/editor-core/` contains the framework-independent project model, commands, history, and timecode functions.
-- `src/formats/` contains clean-room SRT and WebVTT adapters.
-- `src/timeline/` contains the canvas timeline, viewport, snapping, and pointer gestures.
-- `src/media/` contains local media analysis.
-- `src/persistence/` contains IndexedDB project recovery.
-- `src/quality/` contains quality rules.
-- `src/App.tsx` composes the workspace.
+- **Subtitle Operations**: Create new, open existing subtitle files, download in various formats, export plain text.
+- **Video & Audio Sync**: Load local video files, seek, play/pause (`Alt+P`), synchronize timestamps, adjust reading speed (CPS).
+- **Waveform Timeline**: Draw selections, insert cues directly on audio peaks, snap cues.
+- **Translation & Formatting**: Built-in translation options and auto-break/un-break utilities.
+- **Offline Ready**: All scripts, stylesheets (`bootstrap-night`), and UI graphics are bundled locally.
