@@ -35,8 +35,19 @@ npm test
 
 ## Features
 
-- **Subtitle Operations**: Create new, open existing subtitle files, download in various formats, export plain text.
-- **Video & Audio Sync**: Load local video files, seek, play/pause (`Alt+P`), synchronize timestamps, adjust reading speed (CPS).
-- **Waveform Timeline**: Draw selections, insert cues directly on audio peaks, snap cues.
-- **Translation & Formatting**: Built-in translation options and auto-break/un-break utilities.
-- **Offline Ready**: All scripts, stylesheets (`bootstrap-night`), and UI graphics are bundled locally.
+- **Full Subtitle Operations**:
+  - Open subtitle files (`.srt`, `.vtt`, `.sub`, `.ass`, etc.) with built-in API parsing.
+  - Save & convert across 330+ subtitle formats.
+  - Export clean plain text (`Subtitle > Export plain text...`).
+  - Auto-break and un-break line utilities.
+- **Integrated Backend (`/se-api`)**:
+  - The local server implements the required `se-api/subtitles` endpoints with offline parsing fallbacks for SRT/VTT and proxy support to Nikse's conversion engine for all 330 formats.
+  - Cached offline format definitions (`subtitle-formats.json`) and waveform data (`demowaveform.json`).
+- **Video & Audio Synchronization**:
+  - Load local video files, seek, play/pause (`Alt+P`), synchronize timestamps, adjust reading speed (CPS).
+  - HTTP 206 partial range streaming for smooth video scrubbing.
+- **Waveform Timeline**:
+  - Waveform display, draw selections, insert cues directly at playback position, and snap cues.
+- **100% Offline Ready**:
+  - All scripts, stylesheets (`bootstrap-night`), UI graphics, and format registries are bundled locally.
+
